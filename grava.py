@@ -6,73 +6,20 @@ import subprocess
 from time import sleep
 from fnmatch import fnmatch
 from select import select
-import pyaudio
-import wave
 import thread, time 
+from termios import tcflush, TCIOFLUSH 
 
 
 AUDIO_DEVICE = 'sysdefault:CARD=P1330NC'
 
 REPEAT_TIMEOUT = 2
 STORY_PARTS = 4
-REC_DEVICE_IDX = 7
-CHUNK = 1024
-FORMAT = pyaudio.paInt16
-CHANNELS = 2
-RATE = 48000
 RECORD_TIME = 2
 
-WAVE_OUTPUT_FILENAME = "output.wav"
 LAST_PARTS = 3
 
 WAIT_TO_RECORD = 2
 
-#pa = pyaudio.PyAudio()
-
-def record(filename):
-    stream = pa.open(format=FORMAT,
-                     channels=CHANNELS,
-                     input_device_index=REC_DEVICE_IDX,
-                     rate=RATE,
-                     input=True,
-                     frames_per_buffer=CHUNK)
-    
-    frames = []
-    
-    for i in range(0, int(RATE / CHUNK * RECORD_TIME)):
-        data = stream.read(CHUNK)
-        frames.append(data)
-    
-    stream.stop_stream()
-    stream.close()
-    pa.terminate()
-    
-    wf = wave.open(WAVE_OUTPUT_FILENAME, 'wb')
-    wf.setnchannels(CHANNELS)
-    wf.setsampwidth(pa.get_sample_size(FORMAT))
-    wf.setframerate(RATE)
-    wf.writeframes(b''.join(frames))
-    wf.close() 
-
-def play(filename):
-    pa = pyaudio.PyAudio() 
-    wf = wave.open(filename, 'rb')
-    stream = pa.open(format=pa.get_format_from_width(wf.getsampwidth()),
-                     channels=wf.getnchannels(),
-                     rate=wf.getframerate(),
-                     output=True)
-    
-    data = wf.readframes(CHUNK)
-    
-    while data != '':
-        stream.write(data)
-        data = wf.readframes(CHUNK)
-    
-        stream.stop_stream()
-        stream.close()
-    
-        pa.terminate()
- 
 if len(sys.argv) > 1:
     story_dir = sys.argv[1]
     
@@ -123,20 +70,35 @@ def concatenate_parts():
     avconv_command[3] = parts_list.format(str_conc)
     avconv_command[6] = story_file.format(story_dir)
     subprocess.call(avconv_command, stdout=fnull, stderr=fnull)
-    
-def input_thread(L):
-   raw_input()
-   L.append(None)
 
-def do_print():
-    L = []
-    thread.start_new_thread(input_thread, (L,))
-    while 1:
-        time.sleep(.1)
-        print "E"
-        if L: break
- 
- 
+def wait_button(timeout=0):
+    tcflush(sys.stdin, TCIOFLUSH)
+
+    if not timeout:
+        e = raw_input()
+        return False
+    else:
+        while True:
+           rlist, _, _ = select([sys.stdin], [], [], timeout)
+
+           if rlist:
+               s = sys.stdin.readline()
+               rlist = None
+               return False
+           else:
+               return True
+
+def play(part_name):
+    parts = { 'era uma vez': '../era-uma-vez.mp3' 
+            , 'aperte para continuar': "../continuar.mp3"
+            , 'voce gravou': "../escute.mp3"
+            , 'aperte para gravar novamente': "../novamente.mp3" }
+
+    if parts.has_key(part_name):
+        subprocess.call(["mpg123", parts[part_name]], stdout=fnull, stderr=fnull) 
+    else:
+        subprocess.call(["mpg123", part_name], stdout=fnull, stderr=fnull) 
+    
 while True:
     last_number = last_number + 1 
 
@@ -146,11 +108,12 @@ while True:
         sys.exit()
        
     print "ESPERANDO ALGUEM ENTRAR E APERTAR O BOTAO"
-    e = raw_input()
+    wait_button()
     print "APERTOU, ESPERA APERTAR NOVAMENTE PRA GRAVAR..."
 
-    subprocess.call(["mpg123", '../era-uma-vez.mp3'], stdout=fnull, stderr=fnull) 
+    play('era uma vez')
 
+    # Toca ultimas LAST_PARTS da historia
     if last_number > 1:
         files = os.listdir('.') 
         story_parts = sorted([p for p in files if fnmatch(p, "part-??.mp3")]) 
@@ -159,29 +122,18 @@ while True:
             subprocess.call(["mpg123", p], stdout=fnull,
                         stderr=fnull)
 
-    subprocess.call(["mpg123", "../continuar.mp3"], stdout=fnull,
-                        stderr=fnull)
+    play('aperte para continuar')
 
     print "APERTE O BOTAO PRA GRAVAR"
-    while True:
-
-       rlist, _, _ = select([sys.stdin], [], [], WAIT_TO_RECORD)
-
-       if rlist:
-           s = sys.stdin.readline()
-           rlist = None
-           break
-       else:
-           break
- 
+    wait_button(WAIT_TO_RECORD)
     print "APERTOU, COMEÇA A GRAVAR..."
 
     # Gera nome para a parte a ser gravada
     part = part_name.format(last_number)
     lame_command.append(part) 
  
-    gravando = True
-    while gravando:
+    # Loop para gravar 
+    while True:
 
         # Grava con o arecord e converte para mp3 com o lame
         rec = subprocess.Popen(record_command, stdin=None, stderr=fnull, stdout=subprocess.PIPE)
@@ -191,22 +143,14 @@ while True:
         rec.terminate()
         lame.terminate()
 
-        # Loop para tocar novamente o que foi gravado
+        print "OUÇA O QUE GRAVOU E REGRAVE SE QUISER"
 
-        print "OUÇA O QUE GRAVOU"
-        subprocess.call(["mpg123", "../escute.mp3"], stdout=fnull,
-                            stderr=fnull)
-        subprocess.call(["mpg123", part], stdout=fnull,
-                            stderr=fnull)
-        subprocess.call(["mpg123", "../novamente.mp3"])
- 
-        while True:
-            rlist, _, _ = select([sys.stdin], [], [], REPEAT_TIMEOUT)
+        play('voce gravou')
+        play(part)
+        play('aperte para gravar novamente')
 
-            if rlist:
-                s = sys.stdin.readline()
-                break
-            else:
-                gravando = False
-                break
+        timeout = wait_button(REPEAT_TIMEOUT)
 
+        if timeout:
+            lame_command.pop()
+            break
