@@ -9,8 +9,8 @@ from select import select
 import thread, time 
 from termios import tcflush, TCIOFLUSH 
 
-AUDIO_DEVICE = 'sysdefault:CARD=P1330NC'
-#AUDIO_DEVICE = 'sysdefault:CARD=Pro'
+AUDIODEV = 'sysdefault:CARD=P1330NC'
+#AUDIODEV = 'sysdefault:CARD=Pro'
 REPEAT_TIMEOUT = 2
 STORY_PARTS = 4
 RECORD_TIME = 5
